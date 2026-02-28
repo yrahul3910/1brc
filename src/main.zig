@@ -1,4 +1,5 @@
 const std = @import("std");
+const mmap = @import("mmap.zig");
 
 pub fn main() !void {
     var gpa = std.heap.GeneralPurposeAllocator(.{}){};
@@ -15,18 +16,14 @@ pub fn main() !void {
 
     const filename = args[1];
 
-    const file = try std.fs.cwd().openFile(filename, .{});
+    const file = std.fs.cwd().openFile(filename, .{}) catch |e| {
+        std.debug.print("{any}", .{e});
+        @panic("Error: failed to open file.");
+    };
     defer file.close();
 
-    var read_buf: [150]u8 = undefined;
-    var reader = file.reader(&read_buf);
+    var pager = try mmap.MmapPager.init(file.handle);
+    defer pager.deinit();
 
-    var write_buf: [4096]u8 = undefined;
-    var writer = std.fs.File.stdout().writer(&write_buf);
-    const stdout = &writer.interface;
-    defer stdout.flush() catch {};
-
-    while (try reader.interface.takeDelimiter('\n')) |line| {
-        try stdout.print("{s}\n", .{line});
-    }
+    std.debug.print("mmap ok, size={d}\n", .{pager.len});
 }
