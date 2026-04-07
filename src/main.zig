@@ -25,8 +25,6 @@ pub fn main() !void {
     var pager = try mmap.MmapPager.init(file.handle);
     defer pager.deinit();
 
-    std.debug.print("mmap ok, size={d}\n", .{pager.len});
-
     var temp_map = std.StringHashMap(i64).init(allocator);
     defer temp_map.deinit();
 
@@ -36,6 +34,9 @@ pub fn main() !void {
     var multiplier: i64 = 1;
     var cur_temp: i64 = 0;
 
+    // print at end to avoid compiler optimizing away all calcs
+    var total_sum: i64 = 0;
+
     for (pager.ptr, 0..) |c, i| {
         switch (c) {
             ';' => {
@@ -44,7 +45,9 @@ pub fn main() !void {
             },
             '\n' => {
                 const cur_val = temp_map.get(pager.ptr[cs..semi]) orelse 0;
-                try temp_map.put(pager.ptr[cs..semi], multiplier * cur_temp + cur_val);
+                const updated = multiplier * cur_temp + cur_val;
+                total_sum += updated;
+                try temp_map.put(pager.ptr[cs..semi], updated);
 
                 multiplier = 1;
                 cur_temp = 0;
@@ -67,8 +70,5 @@ pub fn main() !void {
         }
     }
 
-    var it = temp_map.iterator();
-    while (it.next()) |entry| {
-        std.debug.print("{s}: {d}\n", .{ entry.key_ptr.*, entry.value_ptr.* });
-    }
+    std.debug.print("{d}", .{total_sum});
 }
