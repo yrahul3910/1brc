@@ -1,6 +1,30 @@
 const std = @import("std");
 const mmap = @import("mmap.zig");
 
+const Stats = struct {
+    min: i32,
+    max: i32,
+    sum: i64,
+    n: u32,
+};
+
+fn updateRecord(map: *std.StringHashMap(Stats), key: []const u8, temp: i32) !void {
+    const res = try map.getOrPut(key);
+    if (res.found_existing) {
+        res.value_ptr.sum += temp;
+        if (temp < res.value_ptr.min) res.value_ptr.min = temp;
+        if (temp > res.value_ptr.max) res.value_ptr.max = temp;
+        res.value_ptr.n += 1;
+    } else {
+        res.value_ptr.* = Stats{
+            .min = temp,
+            .max = temp,
+            .sum = temp,
+            .n = 1,
+        };
+    }
+}
+
 pub fn main() !void {
     var gpa = std.heap.GeneralPurposeAllocator(.{}){};
     defer _ = gpa.deinit();
@@ -25,14 +49,14 @@ pub fn main() !void {
     var pager = try mmap.MmapPager.init(file.handle);
     defer pager.deinit();
 
-    var temp_map = std.StringHashMap(i64).init(allocator);
+    var temp_map = std.StringHashMap(Stats).init(allocator);
     defer temp_map.deinit();
 
     var parsing_temp = false;
     var cs: usize = 0; // where did the current city start?
     var semi: usize = 0; // where did the temp start? points to ;
-    var multiplier: i64 = 1;
-    var cur_temp: i64 = 0;
+    var multiplier: i32 = 1;
+    var cur_temp: i32 = 0;
 
     // print at end to avoid compiler optimizing away all calcs
     var total_sum: i64 = 0;
@@ -44,10 +68,10 @@ pub fn main() !void {
                 semi = i;
             },
             '\n' => {
-                const cur_val = temp_map.get(pager.ptr[cs..semi]) orelse 0;
-                const updated = multiplier * cur_temp + cur_val;
-                total_sum += updated;
-                try temp_map.put(pager.ptr[cs..semi], updated);
+                const newt = multiplier * cur_temp;
+                total_sum += newt;
+
+                try updateRecord(&temp_map, pager.ptr[cs..semi], newt);
 
                 multiplier = 1;
                 cur_temp = 0;
@@ -68,6 +92,13 @@ pub fn main() !void {
             },
             else => {},
         }
+    }
+
+    if (cs < pager.len) {
+        const newt = multiplier * cur_temp;
+        total_sum += newt;
+
+        try updateRecord(&temp_map, pager.ptr[cs..semi], newt);
     }
 
     std.debug.print("{d}", .{total_sum});
