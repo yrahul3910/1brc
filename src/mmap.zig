@@ -7,7 +7,15 @@ pub const MmapPager = struct {
     pub fn init(fd: std.posix.fd_t) !MmapPager {
         const stat = try std.posix.fstat(fd);
 
-        const ptr = std.posix.mmap(null, @intCast(stat.size), std.posix.PROT.READ, std.posix.MAP{ .TYPE = .PRIVATE, .NOCACHE = true }, fd, 0) catch |e| {
+        // TODO: Update flags for other OS
+        const ptr = std.posix.mmap(
+            null,
+            @intCast(stat.size),
+            std.posix.PROT.READ,
+            std.posix.MAP{ .TYPE = .PRIVATE, .NOCACHE = true },
+            fd,
+            0,
+        ) catch |e| {
             std.debug.print("Error: {any}", .{e});
             @panic("Failed to mmap");
         };
