@@ -8,6 +8,11 @@ const Stats = struct {
     n: u32,
 };
 
+const ThreadContext = struct {
+    bytes: []const u8,
+    map: std.StringHashMap(Stats),
+};
+
 fn updateRecord(map: *std.StringHashMap(Stats), key: []const u8, temp: i32) !void {
     const res = try map.getOrPut(key);
     if (res.found_existing) {
@@ -25,43 +30,14 @@ fn updateRecord(map: *std.StringHashMap(Stats), key: []const u8, temp: i32) !voi
     }
 }
 
-pub fn main() !void {
-    var gpa = std.heap.GeneralPurposeAllocator(.{}){};
-    defer _ = gpa.deinit();
-    const allocator = gpa.allocator();
-
-    const args = try std.process.argsAlloc(allocator);
-    defer std.process.argsFree(allocator, args);
-
-    if (args.len < 2) {
-        std.debug.print("Usage: {s} <filename>\n", .{args[0]});
-        return error.MissingFilename;
-    }
-
-    const filename = args[1];
-
-    const file = std.fs.cwd().openFile(filename, .{}) catch |e| {
-        std.debug.print("{any}", .{e});
-        @panic("Error: failed to open file.");
-    };
-    defer file.close();
-
-    var pager = try mmap.MmapPager.init(file.handle);
-    defer pager.deinit();
-
-    var temp_map = std.StringHashMap(Stats).init(allocator);
-    defer temp_map.deinit();
-
+fn parseRange(ctx: *ThreadContext) !void {
     var parsing_temp = false;
     var cs: usize = 0; // where did the current city start?
     var semi: usize = 0; // where did the temp start? points to ;
     var multiplier: i32 = 1;
     var cur_temp: i32 = 0;
 
-    // print at end to avoid compiler optimizing away all calcs
-    var total_sum: i64 = 0;
-
-    for (pager.ptr, 0..) |c, i| {
+    for (ctx.bytes, 0..ctx.bytes.len) |c, i| {
         switch (c) {
             ';' => {
                 parsing_temp = true;
@@ -69,9 +45,8 @@ pub fn main() !void {
             },
             '\n' => {
                 const newt = multiplier * cur_temp;
-                total_sum += newt;
 
-                try updateRecord(&temp_map, pager.ptr[cs..semi], newt);
+                try updateRecord(&ctx.map, ctx.bytes[cs..semi], newt);
 
                 multiplier = 1;
                 cur_temp = 0;
@@ -94,12 +69,108 @@ pub fn main() !void {
         }
     }
 
-    if (cs < pager.len) {
+    if (parsing_temp) {
         const newt = multiplier * cur_temp;
-        total_sum += newt;
+        try updateRecord(&ctx.map, ctx.bytes[cs..semi], newt);
+    }
+}
 
-        try updateRecord(&temp_map, pager.ptr[cs..semi], newt);
+pub fn main() !void {
+    const filename = "10M.txt";
+
+    const file = std.fs.cwd().openFile(filename, .{}) catch |e| {
+        std.debug.print("{any}", .{e});
+        @panic("Error: failed to open file.");
+    };
+    defer file.close();
+
+    const cpu_count = try std.Thread.getCpuCount();
+    var threads = try std.heap.smp_allocator.alloc(std.Thread, cpu_count);
+    defer std.heap.smp_allocator.free(threads);
+
+    var pager = try mmap.MmapPager.init(file.handle);
+    defer pager.deinit();
+
+    // create chunks naively: N/k for now
+    const chunksize = pager.ptr.len / cpu_count;
+
+    const contexts = try std.heap.smp_allocator.alloc(ThreadContext, cpu_count);
+    defer std.heap.smp_allocator.free(contexts);
+
+    var spawned: usize = 0;
+    var cursor: usize = 0;
+    for (0..cpu_count) |i| {
+        if (cursor >= pager.ptr.len) break;
+
+        const raw_end = cursor + chunksize;
+        var end = @min(raw_end, pager.ptr.len);
+
+        if (i == cpu_count - 1) {
+            end = pager.ptr.len;
+        } else {
+            while (end < pager.ptr.len and pager.ptr[end] != '\n') : (end += 1) {}
+            if (end < pager.ptr.len) end += 1; // go past the newline
+        }
+
+        const idx = spawned;
+
+        contexts[idx] = .{
+            .bytes = pager.ptr[cursor..end],
+            .map = std.hash_map.StringHashMap(Stats).init(std.heap.smp_allocator),
+        };
+
+        threads[idx] = try std.Thread.spawn(.{}, parseRange, .{&contexts[idx]});
+
+        spawned += 1;
+        cursor = end;
     }
 
-    std.debug.print("{d}", .{total_sum});
+    for (threads[0..spawned]) |thread| {
+        thread.join();
+    }
+
+    for (contexts[0..spawned]) |*ctx| {
+        ctx.map.deinit();
+    }
+}
+
+// useful to validate correctness. the "checksum" is just the sum of all the sums. it's crude but good enough.
+fn checksumFile(filename: []const u8) !i64 {
+    var gpa = std.heap.GeneralPurposeAllocator(.{}){};
+    defer _ = gpa.deinit();
+    const allocator = gpa.allocator();
+
+    const file = try std.fs.cwd().openFile(filename, .{});
+    defer file.close();
+
+    var pager = try mmap.MmapPager.init(file.handle);
+    defer pager.deinit();
+
+    var ctx = ThreadContext{
+        .bytes = pager.ptr,
+        .map = std.StringHashMap(Stats).init(allocator),
+    };
+    defer ctx.map.deinit();
+
+    try parseRange(&ctx);
+
+    var total: i64 = 0;
+    var it = ctx.map.iterator();
+    while (it.next()) |entry| {
+        total += entry.value_ptr.sum;
+    }
+
+    return total;
+}
+
+test "checksum for 1M.txt" {
+    try std.testing.expectEqual(@as(i64, 178271700), try checksumFile("1M.txt"));
+}
+
+test "checksum for 10M.txt" {
+    try std.testing.expectEqual(@as(i64, 1783055396), try checksumFile("10M.txt"));
+}
+
+test "checksum for 100M.txt" {
+    try std.testing.expectEqual(@as(i64, 17829259159), try checksumFile("100M.txt"));
 }
