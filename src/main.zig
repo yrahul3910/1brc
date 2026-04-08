@@ -75,8 +75,56 @@ fn parseRange(ctx: *ThreadContext) !void {
     }
 }
 
+fn stringLessThan(_: void, lhs: []const u8, rhs: []const u8) bool {
+    return std.mem.order(u8, lhs, rhs) == .lt;
+}
+
+// integer rounding trick: add half the divisor for pos, subtract for neg
+fn roundedMeanTenths(sum: i64, count: u32) i64 {
+    const denom: i64 = @intCast(count);
+    const half: i64 = @intCast(count / 2);
+    if (sum >= 0) {
+        return @divTrunc(sum + half, denom);
+    }
+    return @divTrunc(sum - half, denom);
+}
+
+fn writeTenths(writer: anytype, value: i64) !void {
+    if (value < 0) try writer.writeByte('-');
+    const abs_value: u64 = @intCast(if (value < 0) -value else value);
+    try writer.print("{d}.{d:0>1}", .{ abs_value / 10, abs_value % 10 });
+}
+
+fn emitResults(
+    writer: anytype,
+    names: []const []const u8,
+    city_idx: *const std.StringHashMap(usize),
+    stats: []const Stats,
+) !void {
+    try writer.writeByte('{');
+    for (names, 0..) |city, i| {
+        if (i != 0) {
+            try writer.writeByte(',');
+            try writer.writeByte(' ');
+        }
+
+        const idx = city_idx.get(city).?;
+        const stat = stats[idx];
+
+        try writer.print("{s}=", .{city});
+        try writeTenths(writer, stat.min);
+        try writer.writeByte('/');
+        try writeTenths(writer, roundedMeanTenths(stat.sum, stat.n));
+        try writer.writeByte('/');
+        try writeTenths(writer, stat.max);
+    }
+
+    try writer.writeByte('}');
+    try writer.writeByte('\n');
+}
+
 pub fn main() !void {
-    const filename = "10M.txt";
+    const filename = "1B.txt";
 
     const file = std.fs.cwd().openFile(filename, .{}) catch |e| {
         std.debug.print("{any}", .{e});
@@ -128,6 +176,48 @@ pub fn main() !void {
     for (threads[0..spawned]) |thread| {
         thread.join();
     }
+
+    var ct: usize = 0;
+    var city_idx = std.hash_map.StringHashMap(usize).init(std.heap.smp_allocator);
+    defer city_idx.deinit();
+
+    var stats = try std.ArrayList(Stats).initCapacity(std.heap.smp_allocator, 128);
+    defer stats.deinit(std.heap.smp_allocator);
+
+    var names = try std.ArrayList([]const u8).initCapacity(std.heap.smp_allocator, 128);
+    defer names.deinit(std.heap.smp_allocator);
+
+    for (contexts) |*ctx| {
+        var it = ctx.map.iterator();
+        while (it.next()) |e| {
+            const city = e.key_ptr.*;
+            const cur = e.value_ptr.*;
+
+            if (city_idx.get(city)) |idx| {
+                const old = stats.items[idx];
+                stats.items[idx] = Stats{
+                    .min = @min(old.min, cur.min),
+                    .max = @max(old.max, cur.max),
+                    .n = old.n + cur.n,
+                    .sum = old.sum + cur.sum,
+                };
+            } else {
+                try city_idx.put(city, ct);
+                try names.append(std.heap.smp_allocator, city);
+                try stats.append(std.heap.smp_allocator, cur);
+                ct += 1;
+            }
+        }
+    }
+
+    std.mem.sort([]const u8, names.items, {}, stringLessThan);
+
+    var stdout_buffer: [16 * 1024]u8 = undefined;
+    var stdout_writer = std.fs.File.stdout().writer(&stdout_buffer);
+    const stdout = &stdout_writer.interface;
+
+    try emitResults(stdout, names.items, &city_idx, stats.items);
+    try stdout.flush();
 
     for (contexts[0..spawned]) |*ctx| {
         ctx.map.deinit();
