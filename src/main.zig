@@ -10,13 +10,15 @@ const Stats = struct {
     max: i32,
 };
 
+const HashTable: type = hash.Table([]const u8, Stats, hash.fnv1a);
+
 const ThreadContext = struct {
     bytes: []const u8,
-    map: std.StringHashMap(Stats),
+    map: HashTable,
 };
 
-fn updateRecord(map: *std.StringHashMap(Stats), key: []const u8, temp: i32) !void {
-    const res = try map.getOrPut(key);
+fn updateRecord(map: *HashTable, key: []const u8, temp: i32) !void {
+    const res = map.getOrPut(key);
     if (res.found_existing) {
         res.value_ptr.sum += temp;
         if (temp < res.value_ptr.min) res.value_ptr.min = temp;
@@ -166,7 +168,7 @@ pub fn main() !void {
 
         contexts[idx] = .{
             .bytes = pager.ptr[cursor..end],
-            .map = std.hash_map.StringHashMap(Stats).init(std.heap.smp_allocator),
+            .map = try HashTable.init(std.heap.smp_allocator),
         };
 
         threads[idx] = try std.Thread.spawn(.{}, parseRange, .{&contexts[idx]});
@@ -190,10 +192,11 @@ pub fn main() !void {
     defer names.deinit(std.heap.smp_allocator);
 
     for (contexts) |*ctx| {
-        var it = ctx.map.iterator();
-        while (it.next()) |e| {
-            const city = e.key_ptr.*;
-            const cur = e.value_ptr.*;
+        for (ctx.map.entries) |e| {
+            if (e.psl == 0) continue;
+
+            const city = e.key;
+            const cur = e.val;
 
             if (city_idx.get(city)) |idx| {
                 const old = stats.items[idx];
@@ -222,7 +225,7 @@ pub fn main() !void {
     try stdout.flush();
 
     for (contexts[0..spawned]) |*ctx| {
-        ctx.map.deinit();
+        ctx.map.deinit(std.heap.smp_allocator);
     }
 }
 
@@ -240,7 +243,7 @@ fn checksumFile(filename: []const u8) !i64 {
 
     var ctx = ThreadContext{
         .bytes = pager.ptr,
-        .map = std.StringHashMap(Stats).init(allocator),
+        .map = HashTable.init(allocator),
     };
     defer ctx.map.deinit();
 

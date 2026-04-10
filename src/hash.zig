@@ -1,4 +1,7 @@
 const std = @import("std");
+const mem = std.mem;
+
+const Allocator = mem.Allocator;
 
 pub fn fnv1a(key: []const u8) u64 {
     // offset basis
@@ -23,11 +26,64 @@ fn TableEntry(comptime K: type, comptime V: type) type {
 }
 
 /// open-addressing hashtable with robin hood probing
-fn Table(comptime K: type, comptime V: type, comptime F: fn (K) u64) type {
+pub fn Table(comptime K: type, comptime V: type, comptime F: fn (K) u64) type {
     return struct {
         entries: []TableEntry(K, V),
 
-        fn insert(self: *@This(), key: K, val: V) void {
+        const GetOrPutResult = struct {
+            value_ptr: *V,
+            found_existing: bool,
+        };
+
+        pub fn getOrPut(self: *@This(), key: K) GetOrPutResult {
+            var p = F(key) % self.entries.len;
+            var vpsl: usize = 1;
+
+            while (self.entries[p].psl != 0) {
+                if (self.entries[p].psl == vpsl) {
+                    // check key equality here
+                    return .{ .value_ptr = &self.entries[p].val, .found_existing = true };
+                }
+                // Robin Hood guarantee: if our PSL exceeds the slot's PSL,
+                // the key can't exist further along — insert here instead
+                if (vpsl > self.entries[p].psl) break;
+                p = (p + 1) % self.entries.len;
+                vpsl += 1;
+            }
+
+            var cur_key = key;
+            // not found — do Robin Hood insert, then return pointer to final slot
+            // ... same swap loop as insert ...
+            while (self.entries[p].psl != 0) {
+                if (vpsl > self.entries[p].psl) {
+                    std.mem.swap(K, &cur_key, &self.entries[p].key);
+                    std.mem.swap(usize, &vpsl, &self.entries[p].psl);
+                }
+
+                p = (p + 1) % self.entries.len;
+                vpsl += 1;
+            }
+
+            self.entries[p] = .{ .key = cur_key, .val = std.mem.zeroes(V), .psl = vpsl };
+            return .{ .value_ptr = &self.entries[p].val, .found_existing = false };
+        }
+
+        pub fn init(alloc: Allocator) !@This() {
+            // large size makes it easier to find an entry
+            return try initWithCapacity(alloc, 2048);
+        }
+
+        pub fn initWithCapacity(alloc: Allocator, size: usize) !@This() {
+            return .{
+                .entries = try alloc.alloc(TableEntry(K, V), size),
+            };
+        }
+
+        pub fn deinit(self: *@This(), alloc: Allocator) void {
+            alloc.free(self.entries);
+        }
+
+        pub fn insert(self: *@This(), key: K, val: V) void {
             var p = F(key) % self.entries.len;
             var vpsl: usize = 1;
 
