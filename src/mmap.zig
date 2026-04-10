@@ -12,13 +12,14 @@ pub const MmapPager = struct {
             null,
             @intCast(stat.size),
             std.posix.PROT.READ,
-            std.posix.MAP{ .TYPE = .PRIVATE, .NOCACHE = true },
+            std.posix.MAP{ .TYPE = .PRIVATE },
             fd,
             0,
         ) catch |e| {
             std.debug.print("Error: {any}", .{e});
             @panic("Failed to mmap");
         };
+        try std.posix.madvise(@ptrCast(ptr), @intCast(stat.size), std.posix.MADV.SEQUENTIAL);
 
         return .{ .ptr = ptr, .len = @intCast(stat.size) };
     }

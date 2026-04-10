@@ -2,10 +2,11 @@ const std = @import("std");
 const mmap = @import("mmap.zig");
 
 const Stats = struct {
-    min: i32,
-    max: i32,
+    // ordered to avoid padding
     sum: i64,
     n: u32,
+    min: i32,
+    max: i32,
 };
 
 const ThreadContext = struct {
