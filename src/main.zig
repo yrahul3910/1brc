@@ -1,5 +1,6 @@
 const std = @import("std");
 const mmap = @import("mmap.zig");
+const hash = @import("hash.zig");
 
 const Stats = struct {
     // ordered to avoid padding
