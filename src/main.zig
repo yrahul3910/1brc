@@ -174,7 +174,7 @@ pub fn main() !void {
         if (i == thread_count - 1) {
             end = pager.ptr.len;
         } else {
-            while (end < pager.ptr.len and pager.ptr[end] != '\n') : (end += 1) {}
+            end += swar.find(pager.ptr[end..], '\n').?;
             if (end < pager.ptr.len) end += 1; // go past the newline
         }
 
