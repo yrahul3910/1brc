@@ -44,23 +44,30 @@ fn parseRange(ctx: *ThreadContext) !void {
     while (i < ctx.bytes.len) {
         // parse a line: first, find the ;
         if (swar.find(ctx.bytes[i..], ';')) |j| {
-            const k = swar.find(ctx.bytes[i + j ..], '\n') orelse ctx.bytes[i + j ..].len;
-            var multiplier: i32 = 1;
-            var temp: i32 = 0;
+            // temp can be a few cases: X.X, -X.X, XX.X, -XX.X
+            const first = ctx.bytes[i + j + 1];
+            const second = ctx.bytes[i + j + 2];
+            const third = ctx.bytes[i + j + 3];
+            const fourth = ctx.bytes[i + j + 4];
+            const fifth = ctx.bytes[i + j + 5];
 
-            for (ctx.bytes[i + j + 1 .. i + j + k]) |c| {
-                if (c == '-') {
-                    multiplier = -1;
-                    continue;
-                }
-                if (c == '.') continue;
+            const temp_len: usize = if (first == '-')
+                if (third == '.') 4 else 5
+            else if (second == '.') 3 else 4;
 
-                temp = temp * 10 + (c - '0');
-            }
+            const temp: i32 = switch (temp_len) {
+                3 => @as(i32, first - '0') * 10 + @as(i32, third - '0'),
+                4 => if (first == '-')
+                    -(@as(i32, second - '0') * 10 + @as(i32, fourth - '0'))
+                else
+                    @as(i32, first - '0') * 100 + @as(i32, second - '0') * 10 + @as(i32, fourth - '0'),
+                5 => -(@as(i32, second - '0') * 100 + @as(i32, third - '0') * 10 + @as(i32, fifth - '0')),
+                else => unreachable,
+            };
 
-            try updateRecord(&ctx.map, ctx.bytes[i .. i + j], temp * multiplier);
+            try updateRecord(&ctx.map, ctx.bytes[i .. i + j], temp);
 
-            i += j + k + 1;
+            i += j + 1 + temp_len + 1;
         } else {
             // we should always find a ';', so panic if we don't
             unreachable;
