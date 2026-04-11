@@ -29,7 +29,7 @@ pub fn TableEntry(comptime K: type, comptime V: type) type {
 /// open-addressing hashtable with robin hood probing
 pub fn Table(comptime K: type, comptime V: type, comptime F: fn (K) u64, comptime size: usize) type {
     return struct {
-        n: usize = 16383,
+        n: usize = size - 1,
         entries: [size]TableEntry(K, V) = std.mem.zeroes([size]TableEntry(K, V)),
 
         const GetOrPutResult = struct {

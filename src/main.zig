@@ -18,7 +18,7 @@ fn hash_fn(k: []const u8) u64 {
 const HashTable: type = hash.Table([]const u8, Stats, hash_fn, 16384);
 const TableEntry: type = hash.TableEntry([]const u8, Stats);
 
-const ThreadContext = struct { bytes: []const u8, map: HashTable = .{ .n = 16383 } };
+const ThreadContext = struct { bytes: []const u8, map: HashTable = .{} };
 
 fn updateRecord(map: *HashTable, key: []const u8, temp: i32) !void {
     const res = map.getOrPut(key);
