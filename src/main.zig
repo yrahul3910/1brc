@@ -2,6 +2,7 @@ const std = @import("std");
 const mmap = @import("mmap.zig");
 const hash = @import("hash.zig");
 const swar = @import("swar.zig");
+const tracy = @import("tracy");
 
 const Stats = struct {
     // ordered to avoid padding
@@ -38,19 +39,29 @@ fn updateRecord(map: *HashTable, key: []const u8, temp: i32) !void {
 }
 
 fn parseRange(ctx: *ThreadContext) !void {
+    tracy.setThreadName("parseRange");
+    defer tracy.message("Graceful parseRange thread exist", .{});
+    const zone = tracy.beginZone(@src(), .{ .name = "parseRange" });
+    defer zone.end();
+
     ctx.map = .{};
 
     var i: usize = 0;
     while (i < ctx.bytes.len) {
+        const find_zone = tracy.beginZone(@src(), .{ .name = "findSIMD" });
+        // very slightly (~20ms) slower than `findSIMD`. no idea why.
+        const result = swar.find(ctx.bytes[i..], ';');
+        find_zone.end();
 
         // parse a line: first, find the ;
-        if (swar.findSIMD(ctx.bytes[i..], ';')) |j| {
+        if (result) |j| {
             // temp can be a few cases: X.X, -X.X, XX.X, -XX.X
             const first = ctx.bytes[i + j + 1];
             const second = ctx.bytes[i + j + 2];
             const third = ctx.bytes[i + j + 3];
             const fourth = ctx.bytes[i + j + 4];
-            const fifth = ctx.bytes[i + j + 5];
+
+            const fifth = if (i + j + 5 < ctx.bytes.len) ctx.bytes[i + j + 5] else '0';
 
             const temp_len: usize = if (first == '-')
                 if (third == '.') 4 else 5
@@ -66,7 +77,9 @@ fn parseRange(ctx: *ThreadContext) !void {
                 else => unreachable,
             };
 
+            const update_zone = tracy.beginZone(@src(), .{ .name = "updateRecord" });
             try updateRecord(&ctx.map, ctx.bytes[i .. i + j], temp);
+            update_zone.end();
 
             i += j + 1 + temp_len + 1;
         } else {
@@ -126,6 +139,8 @@ fn emitResults(
 
 pub fn main() !void {
     const filename = "1B.txt";
+    tracy.setThreadName("Main");
+    defer tracy.message("Graceful main thread exit", .{});
 
     const file = std.fs.cwd().openFile(filename, .{}) catch |e| {
         std.debug.print("{any}", .{e});
@@ -133,28 +148,30 @@ pub fn main() !void {
     };
     defer file.close();
 
-    const cpu_count = try std.Thread.getCpuCount();
-    var threads = try std.heap.smp_allocator.alloc(std.Thread, cpu_count);
+    const thread_count = try std.Thread.getCpuCount();
+    var threads = try std.heap.smp_allocator.alloc(std.Thread, thread_count);
     defer std.heap.smp_allocator.free(threads);
 
+    const pager_zone = tracy.beginZone(@src(), .{ .name = "MmapPager.init" });
     var pager = try mmap.MmapPager.init(file.handle);
     defer pager.deinit();
+    pager_zone.end();
 
     // create chunks naively: N/k for now
-    const chunksize = pager.ptr.len / cpu_count;
+    const chunksize = pager.ptr.len / thread_count;
 
-    const contexts = try std.heap.smp_allocator.alloc(ThreadContext, cpu_count);
+    const contexts = try std.heap.smp_allocator.alloc(ThreadContext, thread_count);
     defer std.heap.smp_allocator.free(contexts);
 
     var spawned: usize = 0;
     var cursor: usize = 0;
-    for (0..cpu_count) |i| {
+    for (0..thread_count) |i| {
         if (cursor >= pager.ptr.len) break;
 
         const raw_end = cursor + chunksize;
         var end = @min(raw_end, pager.ptr.len);
 
-        if (i == cpu_count - 1) {
+        if (i == thread_count - 1) {
             end = pager.ptr.len;
         } else {
             while (end < pager.ptr.len and pager.ptr[end] != '\n') : (end += 1) {}
@@ -171,13 +188,17 @@ pub fn main() !void {
         cursor = end;
     }
 
+    const thread_zone = tracy.beginZone(@src(), .{ .name = "joinThreads" });
     for (threads[0..spawned]) |thread| {
         thread.join();
     }
+    thread_zone.end();
 
+    const last_alloc_zone = tracy.beginZone(@src(), .{ .name = "newAllocs" });
     var ct: usize = 0;
     var city_idx = std.hash_map.StringHashMap(usize).init(std.heap.smp_allocator);
     defer city_idx.deinit();
+    last_alloc_zone.end();
 
     var stats = try std.ArrayList(Stats).initCapacity(std.heap.smp_allocator, 128);
     defer stats.deinit(std.heap.smp_allocator);
@@ -215,6 +236,7 @@ pub fn main() !void {
     var stdout_writer = std.fs.File.stdout().writer(&stdout_buffer);
     const stdout = &stdout_writer.interface;
 
+    // profiled, this only takes ~300μs
     try emitResults(stdout, names.items, &city_idx, stats.items);
     try stdout.flush();
 }

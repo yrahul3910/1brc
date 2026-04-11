@@ -1,4 +1,5 @@
 const std = @import("std");
+const tracy = @import("tracy");
 
 pub const MmapPager = struct {
     ptr: []align(std.heap.page_size_min) u8,
@@ -25,8 +26,10 @@ pub const MmapPager = struct {
     }
 
     pub fn deinit(self: *MmapPager) void {
+        const deinit_zone = tracy.beginZone(@src(), .{ .name = "Mmap.deinit" });
         std.posix.munmap(self.ptr);
         self.ptr = undefined;
         self.len = 0;
+        deinit_zone.end();
     }
 };

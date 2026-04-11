@@ -21,6 +21,16 @@ pub fn build(b: *std.Build) void {
     // target and optimize options) will be listed when running `zig build --help`
     // in this directory.
 
+    const tracy_enable =
+        b.option(bool, "tracy_enable", "Enable profiling") orelse
+        if (optimize == .Debug) true else false;
+
+    const tracy = b.dependency("tracy", .{
+        .target = target,
+        .optimize = optimize,
+        .tracy_enable = tracy_enable,
+    });
+
     // This creates a module, which represents a collection of source files alongside
     // some compilation options, such as optimization mode and linked system libraries.
     // Zig modules are the preferred way of making Zig code available to consumers.
@@ -40,6 +50,12 @@ pub fn build(b: *std.Build) void {
         // which requires us to specify a target.
         .target = target,
     });
+
+    mod.addImport("tracy", tracy.module("tracy"));
+    if (tracy_enable) {
+        mod.linkLibrary(tracy.artifact("tracy"));
+        mod.link_libcpp = true;
+    }
 
     // Here we define an executable. An executable needs to have a root module
     // which needs to expose a `main` function. While we could add a main function
@@ -79,6 +95,7 @@ pub fn build(b: *std.Build) void {
                 // can be extremely useful in case of collisions (which can happen
                 // importing modules from different packages).
                 .{ .name = "_1brc", .module = mod },
+                .{ .name = "tracy", .module = tracy.module("tracy") },
             },
         }),
     });
