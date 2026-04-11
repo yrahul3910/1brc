@@ -16,7 +16,7 @@ pub fn fnv1a(key: []const u8) u64 {
     return hash;
 }
 
-fn TableEntry(comptime K: type, comptime V: type) type {
+pub fn TableEntry(comptime K: type, comptime V: type) type {
     return struct {
         key: K,
         val: V,
@@ -27,10 +27,10 @@ fn TableEntry(comptime K: type, comptime V: type) type {
 }
 
 /// open-addressing hashtable with robin hood probing
-pub fn Table(comptime K: type, comptime V: type, comptime F: fn (K) u64) type {
+pub fn Table(comptime K: type, comptime V: type, comptime F: fn (K) u64, comptime size: usize) type {
     return struct {
-        entries: []TableEntry(K, V),
-        n: usize,
+        n: usize = 16383,
+        entries: [size]TableEntry(K, V) = std.mem.zeroes([size]TableEntry(K, V)),
 
         const GetOrPutResult = struct {
             value_ptr: *V,
@@ -72,20 +72,24 @@ pub fn Table(comptime K: type, comptime V: type, comptime F: fn (K) u64) type {
 
         pub fn init(alloc: Allocator) !@This() {
             // large size makes it easier to find an entry
-            return try initWithCapacity(alloc, 2048);
+            return try initWithCapacity(alloc, 16384);
         }
 
-        pub fn initWithCapacity(alloc: Allocator, comptime size: usize) !@This() {
-            if (size & (size - 1) != 0) {
-                @compileError("Prefer a `size` that is a power of 2");
+        pub fn initStack(entries: []TableEntry(K, V)) @This() {
+            return .{ .entries = entries, .n = entries.len - 1 };
+        }
+
+        pub fn initWithCapacity(alloc: Allocator, comptime n: usize) !@This() {
+            if (n & (n - 1) != 0) {
+                @compileError("Prefer a `n` that is a power of 2");
             }
 
-            const entries = try alloc.alloc(TableEntry(K, V), size);
+            const entries = try alloc.alloc(TableEntry(K, V), n);
             @memset(entries, std.mem.zeroes(TableEntry(K, V)));
 
             return .{
                 .entries = entries,
-                .n = size - 1,
+                .n = n - 1,
             };
         }
 

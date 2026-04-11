@@ -15,12 +15,10 @@ fn hash_fn(k: []const u8) u64 {
     return std.hash.Wyhash.hash(0, k);
 }
 
-const HashTable: type = hash.Table([]const u8, Stats, hash_fn);
+const HashTable: type = hash.Table([]const u8, Stats, hash_fn, 16384);
+const TableEntry: type = hash.TableEntry([]const u8, Stats);
 
-const ThreadContext = struct {
-    bytes: []const u8,
-    map: HashTable,
-};
+const ThreadContext = struct { bytes: []const u8, map: HashTable = .{ .n = 16383 } };
 
 fn updateRecord(map: *HashTable, key: []const u8, temp: i32) !void {
     const res = map.getOrPut(key);
@@ -40,11 +38,13 @@ fn updateRecord(map: *HashTable, key: []const u8, temp: i32) !void {
 }
 
 fn parseRange(ctx: *ThreadContext) !void {
+    ctx.map = .{};
+
     var i: usize = 0;
     while (i < ctx.bytes.len) {
 
         // parse a line: first, find the ;
-        if (swar.find(ctx.bytes[i..], ';')) |j| {
+        if (swar.findSIMD(ctx.bytes[i..], ';')) |j| {
             // temp can be a few cases: X.X, -X.X, XX.X, -XX.X
             const first = ctx.bytes[i + j + 1];
             const second = ctx.bytes[i + j + 2];
@@ -163,10 +163,7 @@ pub fn main() !void {
 
         const idx = spawned;
 
-        contexts[idx] = .{
-            .bytes = pager.ptr[cursor..end],
-            .map = try HashTable.init(std.heap.smp_allocator),
-        };
+        contexts[idx] = .{ .bytes = pager.ptr[cursor..end], .map = undefined };
 
         threads[idx] = try std.Thread.spawn(.{}, parseRange, .{&contexts[idx]});
 
@@ -220,29 +217,17 @@ pub fn main() !void {
 
     try emitResults(stdout, names.items, &city_idx, stats.items);
     try stdout.flush();
-
-    for (contexts[0..spawned]) |*ctx| {
-        ctx.map.deinit(std.heap.smp_allocator);
-    }
 }
 
 // useful to validate correctness. the "checksum" is just the sum of all the sums. it's crude but good enough.
 fn checksumFile(filename: []const u8) !i64 {
-    var gpa = std.heap.GeneralPurposeAllocator(.{}){};
-    defer _ = gpa.deinit();
-    const allocator = gpa.allocator();
-
     const file = try std.fs.cwd().openFile(filename, .{});
     defer file.close();
 
     var pager = try mmap.MmapPager.init(file.handle);
     defer pager.deinit();
 
-    var ctx = ThreadContext{
-        .bytes = pager.ptr,
-        .map = try HashTable.init(allocator),
-    };
-    defer ctx.map.deinit(allocator);
+    var ctx = ThreadContext{ .bytes = pager.ptr, .map = .{ .n = 16383 } };
 
     try parseRange(&ctx);
 

@@ -35,3 +35,25 @@ pub fn find(text: []const u8, byte: u8) ?usize {
 
     return null;
 }
+
+pub fn findSIMD(text: []const u8, byte: u8) ?usize {
+    var i: usize = 0;
+    const vec_size = 16;
+    const duped = @as(@Vector(vec_size, u8), @splat(byte));
+
+    while (i + vec_size <= text.len) {
+        const x0 = @as(@Vector(vec_size, u8), text[i..][0..vec_size].*);
+        const matches = x0 == duped;
+        const mask = @as(u16, @bitCast(matches));
+
+        if (mask != 0) return i + @ctz(mask);
+
+        i += vec_size;
+    }
+
+    while (i < text.len) : (i += 1) {
+        if (text[i] == byte) return i;
+    }
+
+    return null;
+}
