@@ -247,16 +247,15 @@ fn checksumFile(filename: []const u8) !i64 {
 
     var ctx = ThreadContext{
         .bytes = pager.ptr,
-        .map = HashTable.init(allocator),
+        .map = try HashTable.init(allocator),
     };
-    defer ctx.map.deinit();
+    defer ctx.map.deinit(allocator);
 
     try parseRange(&ctx);
 
     var total: i64 = 0;
-    var it = ctx.map.iterator();
-    while (it.next()) |entry| {
-        total += entry.value_ptr.sum;
+    for (ctx.map.entries) |entry| {
+        total += entry.val.sum;
     }
 
     return total;
