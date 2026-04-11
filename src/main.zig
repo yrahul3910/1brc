@@ -10,7 +10,11 @@ const Stats = struct {
     max: i32,
 };
 
-const HashTable: type = hash.Table([]const u8, Stats, hash.fnv1a);
+fn hash_fn(k: []const u8) u64 {
+    return std.hash.Wyhash.hash(0, k);
+}
+
+const HashTable: type = hash.Table([]const u8, Stats, hash_fn);
 
 const ThreadContext = struct {
     bytes: []const u8,

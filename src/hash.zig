@@ -29,6 +29,7 @@ fn TableEntry(comptime K: type, comptime V: type) type {
 pub fn Table(comptime K: type, comptime V: type, comptime F: fn (K) u64) type {
     return struct {
         entries: []TableEntry(K, V),
+        n: usize,
 
         const GetOrPutResult = struct {
             value_ptr: *V,
@@ -36,7 +37,7 @@ pub fn Table(comptime K: type, comptime V: type, comptime F: fn (K) u64) type {
         };
 
         pub fn getOrPut(self: *@This(), key: K) GetOrPutResult {
-            var p = F(key) % self.entries.len;
+            var p = F(key) & self.n;
             var vpsl: usize = 1;
 
             while (self.entries[p].psl != 0) {
@@ -47,7 +48,7 @@ pub fn Table(comptime K: type, comptime V: type, comptime F: fn (K) u64) type {
                 // Robin Hood guarantee: if our PSL exceeds the slot's PSL,
                 // the key can't exist further along — insert here instead
                 if (vpsl > self.entries[p].psl) break;
-                p = (p + 1) % self.entries.len;
+                p = (p + 1) & self.n;
                 vpsl += 1;
             }
 
@@ -60,7 +61,7 @@ pub fn Table(comptime K: type, comptime V: type, comptime F: fn (K) u64) type {
                     std.mem.swap(usize, &vpsl, &self.entries[p].psl);
                 }
 
-                p = (p + 1) % self.entries.len;
+                p = (p + 1) & self.n;
                 vpsl += 1;
             }
 
@@ -73,9 +74,14 @@ pub fn Table(comptime K: type, comptime V: type, comptime F: fn (K) u64) type {
             return try initWithCapacity(alloc, 2048);
         }
 
-        pub fn initWithCapacity(alloc: Allocator, size: usize) !@This() {
+        pub fn initWithCapacity(alloc: Allocator, comptime size: usize) !@This() {
+            if (size & 1 == 1) {
+                @compileError("Prefer a `size` that is a power of 2");
+            }
+
             return .{
                 .entries = try alloc.alloc(TableEntry(K, V), size),
+                .n = size - 1,
             };
         }
 
@@ -84,7 +90,7 @@ pub fn Table(comptime K: type, comptime V: type, comptime F: fn (K) u64) type {
         }
 
         pub fn insert(self: *@This(), key: K, val: V) void {
-            var p = F(key) % self.entries.len;
+            var p = F(key) & self.n;
             var vpsl: usize = 1;
 
             var cur_key = key;
@@ -97,7 +103,7 @@ pub fn Table(comptime K: type, comptime V: type, comptime F: fn (K) u64) type {
                     std.mem.swap(usize, &vpsl, &self.entries[p].psl);
                 }
 
-                p = (p + 1) % self.entries.len;
+                p = (p + 1) & self.n;
                 vpsl += 1;
             }
 
