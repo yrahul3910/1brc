@@ -109,10 +109,11 @@ fn writeTenths(writer: anytype, value: i64) !void {
     try writer.print("{d}.{d:0>1}", .{ abs_value / 10, abs_value % 10 });
 }
 
+const CITY_IDX_HASH_SIZE = 2048;
 fn emitResults(
     writer: anytype,
     names: []const []const u8,
-    city_idx: *const std.StringHashMap(usize),
+    city_idx: *hash.Table([]const u8, usize, hash.fnv1a, CITY_IDX_HASH_SIZE),
     stats: []const Stats,
 ) !void {
     try writer.writeByte('{');
@@ -122,7 +123,7 @@ fn emitResults(
             try writer.writeByte(' ');
         }
 
-        const idx = city_idx.get(city).?;
+        const idx = city_idx.getOrPut(city).value_ptr.*;
         const stat = stats[idx];
 
         try writer.print("{s}=", .{city});
@@ -181,7 +182,6 @@ pub fn main() !void {
         const idx = spawned;
 
         contexts[idx] = .{ .bytes = pager.ptr[cursor..end], .map = undefined };
-
         threads[idx] = try std.Thread.spawn(.{}, parseRange, .{&contexts[idx]});
 
         spawned += 1;
@@ -196,14 +196,13 @@ pub fn main() !void {
 
     const last_alloc_zone = tracy.beginZone(@src(), .{ .name = "newAllocs" });
     var ct: usize = 0;
-    var city_idx = std.hash_map.StringHashMap(usize).init(std.heap.smp_allocator);
-    defer city_idx.deinit();
+    var city_idx = hash.Table([]const u8, usize, hash.fnv1a, CITY_IDX_HASH_SIZE){};
     last_alloc_zone.end();
 
-    var stats = try std.ArrayList(Stats).initCapacity(std.heap.smp_allocator, 128);
+    var stats = try std.ArrayList(Stats).initCapacity(std.heap.smp_allocator, 1024);
     defer stats.deinit(std.heap.smp_allocator);
 
-    var names = try std.ArrayList([]const u8).initCapacity(std.heap.smp_allocator, 128);
+    var names = try std.ArrayList([]const u8).initCapacity(std.heap.smp_allocator, 1024);
     defer names.deinit(std.heap.smp_allocator);
 
     for (contexts) |*ctx| {
@@ -213,7 +212,9 @@ pub fn main() !void {
             const city = e.key;
             const cur = e.val;
 
-            if (city_idx.get(city)) |idx| {
+            const res = city_idx.getOrPut(city);
+            if (res.found_existing) {
+                const idx = res.value_ptr.*;
                 const old = stats.items[idx];
                 stats.items[idx] = Stats{
                     .min = @min(old.min, cur.min),
@@ -222,7 +223,7 @@ pub fn main() !void {
                     .sum = old.sum + cur.sum,
                 };
             } else {
-                try city_idx.put(city, ct);
+                res.value_ptr.* = ct;
                 try names.append(std.heap.smp_allocator, city);
                 try stats.append(std.heap.smp_allocator, cur);
                 ct += 1;
