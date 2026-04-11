@@ -61,7 +61,7 @@ fn parseRange(ctx: *ThreadContext) !void {
             const third = ctx.bytes[i + j + 3];
             const fourth = ctx.bytes[i + j + 4];
 
-            const fifth = if (i + j + 5 < ctx.bytes.len) ctx.bytes[i + j + 5] else '0';
+            const fifth = @intFromBool(first == '-') * ctx.bytes[i + j + 5];
 
             const temp_len: usize = if (first == '-')
                 if (third == '.') 4 else 5
