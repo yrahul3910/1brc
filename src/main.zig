@@ -1,6 +1,7 @@
 const std = @import("std");
 const mmap = @import("mmap.zig");
 const hash = @import("hash.zig");
+const swar = @import("swar.zig");
 
 const Stats = struct {
     // ordered to avoid padding
@@ -39,47 +40,31 @@ fn updateRecord(map: *HashTable, key: []const u8, temp: i32) !void {
 }
 
 fn parseRange(ctx: *ThreadContext) !void {
-    var parsing_temp = false;
-    var cs: usize = 0; // where did the current city start?
-    var semi: usize = 0; // where did the temp start? points to ;
-    var multiplier: i32 = 1;
-    var cur_temp: i32 = 0;
+    var i: usize = 0;
+    while (i < ctx.bytes.len) {
+        // parse a line: first, find the ;
+        if (swar.find(ctx.bytes[i..], ';')) |j| {
+            const k = swar.find(ctx.bytes[i + j ..], '\n') orelse ctx.bytes[i + j ..].len;
+            var multiplier: i32 = 1;
+            var temp: i32 = 0;
 
-    for (ctx.bytes, 0..ctx.bytes.len) |c, i| {
-        switch (c) {
-            ';' => {
-                parsing_temp = true;
-                semi = i;
-            },
-            '\n' => {
-                const newt = multiplier * cur_temp;
-
-                try updateRecord(&ctx.map, ctx.bytes[cs..semi], newt);
-
-                multiplier = 1;
-                cur_temp = 0;
-                parsing_temp = false;
-                cs = i + 1;
-            },
-            '-' => {
-                // can also appear within city names
-                if (parsing_temp) {
+            for (ctx.bytes[i + j + 1 .. i + j + k]) |c| {
+                if (c == '-') {
                     multiplier = -1;
+                    continue;
                 }
-            },
-            // opt: all temp values have 1 decimal places, divide by 10 at the end
-            '0'...'9' => {
-                if (parsing_temp) {
-                    cur_temp = 10 * cur_temp + (c - '0');
-                }
-            },
-            else => {},
-        }
-    }
+                if (c == '.') continue;
 
-    if (parsing_temp) {
-        const newt = multiplier * cur_temp;
-        try updateRecord(&ctx.map, ctx.bytes[cs..semi], newt);
+                temp = temp * 10 + (c - '0');
+            }
+
+            try updateRecord(&ctx.map, ctx.bytes[i .. i + j], temp * multiplier);
+
+            i += j + k + 1;
+        } else {
+            // we should always find a ';', so panic if we don't
+            unreachable;
+        }
     }
 }
 

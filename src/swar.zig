@@ -1,12 +1,13 @@
 const std = @import("std");
 
+// ported from: https://github.com/dans-stuff/swar
 pub fn find(text: []const u8, byte: u8) ?usize {
     var i: usize = 0;
     const byte_u64: u64 = @intCast(byte);
+    // broadcast target byte
     const duped = byte_u64 * 0x0101_0101_0101_0101;
 
     while (i + 8 <= text.len) {
-        // broadcast target byte
         const x0 = std.mem.readInt(u64, text[i..][0..8], .little);
 
         // turn matches to zeros
@@ -14,8 +15,6 @@ pub fn find(text: []const u8, byte: u8) ?usize {
 
         // SIMD within a register (SWAR), aka packed SIMD
         // swar: zero-byte detection trick:
-        // ported from: https://github.com/dans-stuff/swar
-
         // for each byte:
         // 1. mask off bit 7 (the first &) so the addition doesn't carry to the next byte
         // 2. adding that value sets bit 7 for any nonzero byte, so a zero byte stays below 0x80
