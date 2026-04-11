@@ -42,6 +42,7 @@ fn updateRecord(map: *HashTable, key: []const u8, temp: i32) !void {
 fn parseRange(ctx: *ThreadContext) !void {
     var i: usize = 0;
     while (i < ctx.bytes.len) {
+
         // parse a line: first, find the ;
         if (swar.find(ctx.bytes[i..], ';')) |j| {
             // temp can be a few cases: X.X, -X.X, XX.X, -XX.X
