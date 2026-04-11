@@ -61,19 +61,20 @@ fn parseRange(ctx: *ThreadContext) !void {
             const third = ctx.bytes[i + j + 3];
             const fourth = ctx.bytes[i + j + 4];
 
-            const fifth = @intFromBool(first == '-') * ctx.bytes[i + j + 5];
+            const neg = first == '-';
+            const fifth = @intFromBool(neg) * ctx.bytes[i + j + 5];
 
-            const temp_len: usize = if (first == '-')
+            const temp_len: usize = if (neg)
                 if (third == '.') 4 else 5
             else if (second == '.') 3 else 4;
 
             const temp: i32 = switch (temp_len) {
-                3 => @as(i32, first - '0') * 10 + @as(i32, third - '0'),
+                3 => @as(i32, first) * 10 + @as(i32, third) - 0x210,
                 4 => if (first == '-')
-                    -(@as(i32, second - '0') * 10 + @as(i32, fourth - '0'))
+                    -(@as(i32, second) * 10 + @as(i32, fourth) - 0x210)
                 else
-                    @as(i32, first - '0') * 100 + @as(i32, second - '0') * 10 + @as(i32, fourth - '0'),
-                5 => -(@as(i32, second - '0') * 100 + @as(i32, third - '0') * 10 + @as(i32, fifth - '0')),
+                    @as(i32, first) * 100 + @as(i32, second) * 10 + @as(i32, fourth) - 0x14d0,
+                5 => -(@as(i32, second) * 100 + @as(i32, third) * 10 + @as(i32, fifth) - 0x14d0),
                 else => unreachable,
             };
 
@@ -81,7 +82,7 @@ fn parseRange(ctx: *ThreadContext) !void {
             try updateRecord(&ctx.map, ctx.bytes[i .. i + j], temp);
             update_zone.end();
 
-            i += j + 1 + temp_len + 1;
+            i += j + 2 + temp_len;
         } else {
             // we should always find a ';', so panic if we don't
             unreachable;
