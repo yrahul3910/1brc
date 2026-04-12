@@ -19,9 +19,7 @@ fn hash_fn(k: []const u8) u64 {
 // change this to your CPU's logical core count
 const PARALLELISM = 14;
 
-const HashTable: type = hash.Table([]const u8, Stats, hash_fn, 16384);
-const TableEntry: type = hash.TableEntry([]const u8, Stats);
-
+const HashTable: type = hash.Table(Stats, hash_fn, 16384);
 const ThreadContext = struct { bytes: []const u8, map: HashTable = .{} };
 
 fn updateRecord(map: *HashTable, key: []const u8, temp: i32) !void {
@@ -52,7 +50,6 @@ fn parseRange(ctx: *ThreadContext) !void {
     var i: usize = 0;
     while (i < ctx.bytes.len) {
         const find_zone = tracy.beginZone(@src(), .{ .name = "findSIMD" });
-        // very slightly (~20ms) slower than `findSIMD`. no idea why.
         const result = swar.find(ctx.bytes[i..], ';');
         find_zone.end();
 
@@ -117,7 +114,7 @@ const CITY_IDX_HASH_SIZE = 2048;
 fn emitResults(
     writer: anytype,
     names: []const []const u8,
-    city_idx: *hash.Table([]const u8, usize, hash.fnv1a, CITY_IDX_HASH_SIZE),
+    city_idx: *hash.Table(usize, hash.fnv1a, CITY_IDX_HASH_SIZE),
     stats: []const Stats,
 ) !void {
     try writer.writeByte('{');
@@ -146,7 +143,7 @@ fn parallelAggregate(
     tid: usize,
     n_threads: usize,
     maps: []const ThreadContext,
-    result: *hash.Table([]const u8, Stats, hash_fn, 2048),
+    result: *hash.Table(Stats, hash_fn, 2048),
 ) void {
     result.* = .{};
 
@@ -227,14 +224,14 @@ pub fn main() !void {
     thread_zone.end();
 
     var ct: usize = 0;
-    var city_idx = hash.Table([]const u8, usize, hash.fnv1a, CITY_IDX_HASH_SIZE){};
+    var city_idx = hash.Table(usize, hash.fnv1a, CITY_IDX_HASH_SIZE){};
 
     var stats: [512]Stats = std.mem.zeroes([512]Stats);
 
     var names = try std.ArrayList([]const u8).initCapacity(std.heap.smp_allocator, 512);
     defer names.deinit(std.heap.smp_allocator);
 
-    const AggTable = hash.Table([]const u8, Stats, hash_fn, 2048);
+    const AggTable = hash.Table(Stats, hash_fn, 2048);
     const partial_results = try std.heap.smp_allocator.alloc(AggTable, thread_count);
     defer std.heap.smp_allocator.free(partial_results);
 
