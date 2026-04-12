@@ -42,6 +42,7 @@ pub fn Table(comptime V: type, comptime F: fn ([]const u8) u64, comptime size: u
             var h = F(key);
             var p = h & self.n;
             var vpsl: usize = 1;
+
             // key lives inside the mmap, so key.ptr[0..8] is always valid memory
             // mask off bytes past key.len so short keys are deterministic
             var sk: u64 = std.mem.readInt(u64, key.ptr[0..8], .little);

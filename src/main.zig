@@ -19,7 +19,7 @@ fn hash_fn(k: []const u8) u64 {
 // change this to your CPU's logical core count
 const PARALLELISM = 14;
 
-const HashTable: type = hash.Table(Stats, hash_fn, 16384);
+const HashTable: type = hash.Table(Stats, hash_fn, 32768);
 const ThreadContext = struct { bytes: []const u8, map: HashTable = .{} };
 
 fn updateRecord(map: *HashTable, key: []const u8, temp: i32) !void {
