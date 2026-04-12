@@ -16,6 +16,9 @@ fn hash_fn(k: []const u8) u64 {
     return std.hash.Wyhash.hash(0, k);
 }
 
+// change this to your CPU's logical core count
+const PARALLELISM = 14;
+
 const HashTable: type = hash.Table([]const u8, Stats, hash_fn, 16384);
 const TableEntry: type = hash.TableEntry([]const u8, Stats);
 
@@ -139,6 +142,34 @@ fn emitResults(
     try writer.writeByte('\n');
 }
 
+fn parallelAggregate(
+    tid: usize,
+    n_threads: usize,
+    maps: []const ThreadContext,
+    result: *hash.Table([]const u8, Stats, hash_fn, 2048),
+) void {
+    result.* = .{};
+
+    for (maps) |ctx| {
+        for (ctx.map.entries) |e| {
+            if (e.psl == 0) continue;
+            if (hash_fn(e.key) % n_threads != tid) continue;
+
+            const res = result.getOrPut(e.key);
+            if (res.found_existing) {
+                res.value_ptr.* = .{
+                    .min = @min(res.value_ptr.min, e.val.min),
+                    .max = @max(res.value_ptr.max, e.val.max),
+                    .n = res.value_ptr.n + e.val.n,
+                    .sum = res.value_ptr.sum + e.val.sum,
+                };
+            } else {
+                res.value_ptr.* = e.val;
+            }
+        }
+    }
+}
+
 pub fn main() !void {
     const filename = "1B.txt";
     tracy.setThreadName("Main");
@@ -150,7 +181,7 @@ pub fn main() !void {
     };
     defer file.close();
 
-    const thread_count = try std.Thread.getCpuCount();
+    const thread_count = PARALLELISM;
     var threads = try std.heap.smp_allocator.alloc(std.Thread, thread_count);
     defer std.heap.smp_allocator.free(threads);
 
@@ -195,39 +226,43 @@ pub fn main() !void {
     }
     thread_zone.end();
 
-    const last_alloc_zone = tracy.beginZone(@src(), .{ .name = "newAllocs" });
     var ct: usize = 0;
     var city_idx = hash.Table([]const u8, usize, hash.fnv1a, CITY_IDX_HASH_SIZE){};
-    last_alloc_zone.end();
 
-    var stats = try std.ArrayList(Stats).initCapacity(std.heap.smp_allocator, 1024);
-    defer stats.deinit(std.heap.smp_allocator);
+    var stats: [512]Stats = std.mem.zeroes([512]Stats);
 
-    var names = try std.ArrayList([]const u8).initCapacity(std.heap.smp_allocator, 1024);
+    var names = try std.ArrayList([]const u8).initCapacity(std.heap.smp_allocator, 512);
     defer names.deinit(std.heap.smp_allocator);
 
-    for (contexts) |*ctx| {
-        for (ctx.map.entries) |e| {
+    const AggTable = hash.Table([]const u8, Stats, hash_fn, 2048);
+    const partial_results = try std.heap.smp_allocator.alloc(AggTable, thread_count);
+    defer std.heap.smp_allocator.free(partial_results);
+
+    for (0..thread_count) |i| {
+        threads[i] = try std.Thread.spawn(
+            .{},
+            parallelAggregate,
+            .{ i, thread_count, contexts, &partial_results[i] },
+        );
+    }
+    for (threads) |t| t.join();
+
+    var i: usize = 0; // loop over stats
+    for (partial_results) |*agg| {
+        for (agg.entries) |e| {
             if (e.psl == 0) continue;
 
-            const city = e.key;
-            const cur = e.val;
-
-            const res = city_idx.getOrPut(city);
+            const res = city_idx.getOrPut(e.key);
             if (res.found_existing) {
-                const idx = res.value_ptr.*;
-                const old = stats.items[idx];
-                stats.items[idx] = Stats{
-                    .min = @min(old.min, cur.min),
-                    .max = @max(old.max, cur.max),
-                    .n = old.n + cur.n,
-                    .sum = old.sum + cur.sum,
-                };
+                // threads own disjoint city sets
+                unreachable;
             } else {
                 res.value_ptr.* = ct;
-                try names.append(std.heap.smp_allocator, city);
-                try stats.append(std.heap.smp_allocator, cur);
+                try names.append(std.heap.smp_allocator, e.key);
+                stats[i] = e.val;
+
                 ct += 1;
+                i += 1;
             }
         }
     }
@@ -239,7 +274,7 @@ pub fn main() !void {
     const stdout = &stdout_writer.interface;
 
     // profiled, this only takes ~300μs
-    try emitResults(stdout, names.items, &city_idx, stats.items);
+    try emitResults(stdout, names.items, &city_idx, &stats);
     try stdout.flush();
 }
 
